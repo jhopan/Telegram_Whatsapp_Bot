@@ -1,0 +1,13 @@
+{
+  "watch": ["src"],
+  "ext": "js,json,mjs,cjs",
+  "ignore": [
+    "node_modules/",
+    "sessions/",
+    "app.log",
+    "scheduled_messages.json"
+  ],
+  "exec": "node src/bot.js",
+  "verbose": true,
+  "delay": "1500"
+}

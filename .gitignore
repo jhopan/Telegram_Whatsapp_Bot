@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Session Data (SANGAT PENTING!)
+sessions/
+whatsapp-session.json
+*.json # Jika Anda menyimpan sesi dengan nama lain di dalam folder sessions
+
+# Environment Variables File (SANGAT PENTING!)
+.env
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Optional Editor directories and files
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
