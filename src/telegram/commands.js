@@ -5,7 +5,6 @@ const commands = [
     { command: 'logout_wa', description: 'Logout dari sesi WhatsApp dan hapus data sesi.' }, // <-- Tambahkan ini
     { command: 'jadwalkanpesan', description: 'Format: /jadwalkanpesan <nomor_WA/ID_grup> <HH:MM> <DD/MM/YYYY> <pesan>' },
     { command: 'daftarterjadwal', description: 'Melihat daftar pesan yang belum terkirim.' },
-    { command: 'batalkan', description: 'Format: /batalkan <ID_pesan_terjadwal>' },
     { command: 'bantuan', description: 'Menampilkan pesan bantuan ini.' },
 ];
 

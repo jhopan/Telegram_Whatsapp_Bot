@@ -1,27 +1,19 @@
 // src/telegram/handlers/startHandler.js
-const logger = require('../../utils/logger'); // Tambahkan ini jika Anda ingin log saat bantuan ditampilkan
+const config = require('../../config'); // Impor config untuk mengambil nomor WA pemilik jika ada
+
+// Nomor WhatsApp Pemilik/Admin untuk Bantuan
+// Anda bisa juga menyimpannya di file .env dan mengambilnya via config
+const ownerWhatsAppLink = config.ownerWhatsAppLink || 'https://api.whatsapp.com/send/?phone=6282298657242&text=Halo%2C+saya+butuh+bantuan+dengan+Bot+Asisten+WA.&type=phone_number&app_absent=0'; // Default ke nomor Anda
 
 const helpMessage = `Selamat datang di Bot Asisten WhatsApp!
 
-Perintah yang tersedia:
-/login_wa - Mulai proses login ke WhatsApp Web.
-/logout_wa - Logout dari sesi WhatsApp dan hapus data sesi.
-/jadwalkanpesan <nomor_WA_atau_ID_grup> <HH:MM> <DD/MM/YYYY> <isi_pesan>
-    Contoh: /jadwalkanpesan 081234567890 17:00 25/12/2025 Selamat Natal!
-    Contoh Grup: /jadwalkanpesan xxxxxxxxxxxx@g.us 09:00 01/01/2026 Meeting tim
-/daftarterjadwal - Lihat semua pesan yang telah dijadwalkan dan belum terkirim.
-/batalkan <ID_pesan_terjadwal> - Batalkan pesan yang sudah dijadwalkan.
-/bantuan - Tampilkan pesan bantuan ini.
+Bot ini digunakan untuk melakukan otomatis pengiriman pesan wa.
+Baik untuk mengirim pribadi maupun ke grup.
 
-PENTING:
-- Bot ini menggunakan WhatsApp Web secara tidak resmi. Risiko pemblokiran akun WhatsApp Anda ada. Gunakan dengan bijak.
-- Pastikan format tanggal dan waktu benar.
+Jika Anda memerlukan bantuan lebih lanjut atau menemukan masalah, jangan ragu untuk menghubungi pemilik bot melalui WhatsApp:
+[Hubungi Pemilik Bot di WhatsApp](${ownerWhatsAppLink})
 `;
 
-module.exports = (ctx) => {
-    // Anda bisa menambahkan log di sini jika ingin tahu kapan pesan bantuan diakses
-    // logger.info(`Menampilkan pesan bantuan untuk user: ${ctx.from.username || ctx.from.id}`);
-    ctx.reply(helpMessage).catch(err => {
-        logger.error('Gagal mengirim pesan bantuan:', err);
-    });
+module.exports = {
+    helpMessage,
 };
