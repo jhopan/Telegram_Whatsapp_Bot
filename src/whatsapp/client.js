@@ -29,8 +29,8 @@ const waClient = new Client({
 let qrCodeDataUrl = null;
 let isWhatsAppReady = false;
 let knownGroups = []; 
+let knownContacts = []; // Variabel untuk menyimpan kontak yang diketahui
 
-// Fungsi untuk membuat jeda
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 waClient.on('qr', async (qr) => {
@@ -52,6 +52,8 @@ waClient.on('authenticated', () => {
 waClient.on('auth_failure', async (msg) => { 
     logger.error('Autentikasi WhatsApp GAGAL:', msg);
     isWhatsAppReady = false;
+    knownContacts = []; 
+    knownGroups = [];   
     const clientId = config.waSessionFile ? config.waSessionFile.replace('.json', '') : undefined;
     const sessionDirName = `session${clientId ? `-${clientId}` : ''}`;
     const sessionDirPath = path.join(__dirname, '../../sessions', sessionDirName);
@@ -71,47 +73,84 @@ waClient.on('ready', async () => {
     qrCodeDataUrl = null; 
     logger.info('Klien WhatsApp SIAP!');
     
-    // --- Implementasi Retry untuk getChats ---
-    const maxRetries = 10; // Jumlah maksimal percobaan
-    const retryDelay = 10000; // Jeda antar percobaan (10 detik)
-    let attempts = 0;
+    // Ambil daftar grup dengan mekanisme retry
+    const maxRetriesGetChats = 3; 
+    const retryDelayGetChats = 10000; 
+    let attemptsGetChats = 0;
     let chatsFetched = false;
+    await delay(2000); 
 
-    // Beri sedikit waktu awal sebelum percobaan pertama
-    await delay(5000); // Jeda awal 5 detik
-
-    while (attempts < maxRetries && !chatsFetched) {
-        attempts++;
+    while (attemptsGetChats < maxRetriesGetChats && !chatsFetched) {
+        attemptsGetChats++;
         try {
-            logger.info(`Mencoba mengambil daftar chat (Percobaan ${attempts}/${maxRetries})...`);
+            logger.info(`Mencoba mengambil daftar chat (Percobaan ${attemptsGetChats}/${maxRetriesGetChats})...`);
             const chats = await waClient.getChats();
             knownGroups = chats.filter(chat => chat.isGroup).map(group => ({
                 name: group.name,
                 id: group.id._serialized
             }));
             logger.info(`Ditemukan dan disimpan ${knownGroups.length} grup yang diikuti bot.`);
-            // knownGroups.forEach(g => logger.info(` - Grup: ${g.name} (ID: ${g.id})`));
-            chatsFetched = true; // Tandai bahwa pengambilan berhasil
+            chatsFetched = true; 
         } catch (e) {
-            logger.error(`Gagal mengambil daftar grup (Percobaan ${attempts}/${maxRetries}):`, e);
-            if (attempts < maxRetries) {
-                logger.info(`Akan mencoba lagi dalam ${retryDelay / 1000} detik...`);
-                await delay(retryDelay);
+            logger.error(`Gagal mengambil daftar grup (Percobaan ${attemptsGetChats}/${maxRetriesGetChats}):`, e);
+            if (attemptsGetChats < maxRetriesGetChats) {
+                logger.info(`Akan mencoba lagi getChats dalam ${retryDelayGetChats / 1000} detik...`);
+                await delay(retryDelayGetChats);
             } else {
-                logger.error(`Gagal mengambil daftar grup setelah ${maxRetries} percobaan. Fitur pencarian nama grup mungkin tidak berfungsi.`);
-                knownGroups = []; // Pastikan knownGroups kosong jika semua percobaan gagal
+                logger.error(`Gagal mengambil daftar grup setelah ${maxRetriesGetChats} percobaan.`);
+                knownGroups = []; 
             }
         }
     }
-    // --- Akhir Implementasi Retry ---
+
+    // Ambil daftar kontak dengan mekanisme retry
+    const maxRetriesGetContacts = 3;
+    const retryDelayGetContacts = 7000; 
+    let attemptsGetContacts = 0;
+    let contactsFetched = false;
+    await delay(3000); // Jeda awal sebelum getContacts
+
+    while (attemptsGetContacts < maxRetriesGetContacts && !contactsFetched) {
+        attemptsGetContacts++;
+        try {
+            logger.info(`Mencoba mengambil daftar kontak (Percobaan ${attemptsGetContacts}/${maxRetriesGetContacts})...`);
+            const contacts = await waClient.getContacts();
+            knownContacts = contacts
+                .filter(contact => contact.isMyContact && contact.id && contact.id.user && (contact.name || contact.pushname)) 
+                .map(contact => ({
+                    name: contact.name || contact.pushname, 
+                    id: contact.id._serialized, 
+                    number: contact.id.user 
+                }));
+            logger.info(`Ditemukan dan disimpan ${knownContacts.length} kontak.`);
+            // --- LOGGING TAMBAHAN UNTUK KONTAK (DIIKTIFKAN) ---
+            if (knownContacts.length > 0) {
+                logger.info('Beberapa contoh kontak yang diambil (maksimal 5):');
+                for (let i = 0; i < Math.min(5, knownContacts.length); i++) {
+                    logger.info(` - Nama: ${knownContacts[i].name}, Nomor: ${knownContacts[i].number}, ID: ${knownContacts[i].id}`);
+                }
+            }
+            // --- AKHIR LOGGING TAMBAHAN ---
+            contactsFetched = true;
+        } catch (e) {
+            logger.error(`Gagal mengambil daftar kontak (Percobaan ${attemptsGetContacts}/${maxRetriesGetContacts}):`, e);
+             if (attemptsGetContacts < maxRetriesGetContacts) {
+                logger.info(`Akan mencoba lagi getContacts dalam ${retryDelayGetContacts / 1000} detik...`);
+                await delay(retryDelayGetContacts);
+            } else {
+                logger.error(`Gagal mengambil daftar kontak setelah ${maxRetriesGetContacts} percobaan.`);
+                knownContacts = []; 
+            }
+        }
+    }
 });
 
-waClient.on('disconnected', (reason) => {
+waClient.on('disconnected', (reason) => { 
     logger.warn('Klien WhatsApp terputus:', reason);
     isWhatsAppReady = false;
     knownGroups = []; 
+    knownContacts = []; 
 });
-
 
 function initializeWhatsAppClient() {
     logger.info('Menginisialisasi klien WhatsApp...');
@@ -122,13 +161,13 @@ function initializeWhatsAppClient() {
     });
 }
 
-async function logoutWhatsAppClient() {
+async function logoutWhatsAppClient() { 
     logger.info('Memulai proses logout WhatsApp...');
-    if (!waClient) { /* ... */ return { success: false, message: 'Klien tidak diinisialisasi.' }; }
+    if (!waClient) { return { success: false, message: 'Klien tidak diinisialisasi.' }; }
     try {
         if (isWhatsAppReady) { await waClient.logout(); logger.info('Berhasil logout dari sesi WhatsApp (via waClient.logout()).'); }
         else { logger.info('Klien WhatsApp tidak dalam kondisi ready, lanjut pembersihan.'); }
-        isWhatsAppReady = false; qrCodeDataUrl = null; knownGroups = [];
+        isWhatsAppReady = false; qrCodeDataUrl = null; knownGroups = []; knownContacts = []; 
         const clientId = config.waSessionFile ? config.waSessionFile.replace('.json', '') : undefined;
         const sessionDirName = `session${clientId ? `-${clientId}` : ''}`;
         const sessionDirPath = path.join(__dirname, '../../sessions', sessionDirName);
@@ -141,9 +180,9 @@ async function logoutWhatsAppClient() {
             logger.warn(`Direktori sesi ${sessionDirPath} tidak ditemukan untuk dihapus.`);
             return { success: true, message: 'Berhasil logout (data sesi tidak ditemukan).' };
         }
-    } catch (error) { /* ... (error handling logout) ... */ 
+    } catch (error) { 
         logger.error('Error saat proses logout WhatsApp:', error);
-        isWhatsAppReady = false; qrCodeDataUrl = null; knownGroups = [];
+        isWhatsAppReady = false; qrCodeDataUrl = null; knownGroups = []; knownContacts = [];
         return { success: false, message: `Error saat logout: ${error.message}` };
     }
 }
@@ -179,7 +218,7 @@ async function joinGroupByInviteAndGetInfo(inviteCode) {
             logger.warn(`Berhasil bergabung dengan grup ID ${groupId}, tetapi gagal mendapatkan detail chat atau bukan grup.`);
             return { success: true, groupId: groupId, groupName: 'Nama Tidak Diketahui', message: `Berhasil bergabung dengan grup (ID: ${groupId}), nama tidak dapat diambil.` };
         }
-    } catch (error) { /* ... (error handling joinGroup) ... */ 
+    } catch (error) { 
         logger.error(`Gagal bergabung dengan grup menggunakan kode ${inviteCode}:`, error);
         let userMessage = 'Gagal bergabung dengan grup.'; let needsName = false;
         if (error.message) {
@@ -196,6 +235,32 @@ async function joinGroupByInviteAndGetInfo(inviteCode) {
     }
 }
 
+/**
+ * Mencari kontak berdasarkan nama dari daftar kontak yang diketahui (knownContacts).
+ * @param {string} name Nama kontak yang dicari (bisa sebagian).
+ * @returns {Array<{name: string, id: string, number: string}>} Array kontak yang cocok.
+ */
+function findContactsByName(name) {
+    if (!isWhatsAppReady) {
+        logger.warn('findContactsByName: Klien WhatsApp belum siap. Daftar kontak mungkin belum tersedia.');
+        return [];
+    }
+    if (!name || typeof name !== 'string') {
+        logger.warn(`findContactsByName: Nama input tidak valid: ${name}`);
+        return [];
+    }
+    const searchTerm = name.toLowerCase().trim();
+    logger.info(`[findContactsByName] Mencari dengan searchTerm: "${searchTerm}" di ${knownContacts.length} kontak.`); 
+    if (knownContacts.length === 0) {
+        logger.warn('findContactsByName: Daftar knownContacts kosong. Mungkin getContacts() gagal atau belum selesai dimuat.');
+    }
+    const results = knownContacts.filter(contact => 
+        contact.name && contact.name.toLowerCase().includes(searchTerm)
+    );
+    logger.info(`[findContactsByName] Ditemukan ${results.length} kontak untuk searchTerm "${searchTerm}"`); 
+    return results;
+}
+
 module.exports = {
     initializeWhatsAppClient,
     logoutWhatsAppClient,
@@ -207,7 +272,6 @@ module.exports = {
     getQrCodeDataUrl: () => qrCodeDataUrl,
     clearQrCodeDataUrl: () => { qrCodeDataUrl = null; },
     sendWhatsAppMessage: async (numberOrGroupId, message) => {
-        // ... (fungsi sendWhatsAppMessage tetap sama) ...
         if (!isWhatsAppReady) {
             logger.warn('Klien WhatsApp belum siap untuk mengirim pesan.');
             throw new Error('WhatsApp client not ready.');
@@ -246,5 +310,7 @@ module.exports = {
             logger.error("Detail error pengiriman:", error); 
             throw error;
         }
-    }
+    },
+    findContactsByName, 
+    getKnownContacts: () => knownContacts 
 };
