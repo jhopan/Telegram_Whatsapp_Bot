@@ -4,7 +4,7 @@ const config = require('../config');
 const logger = require('../utils/logger');
 
 // Impor scenes
-const scheduleScene = require('./scenes/scheduleScene'); // Ini adalah instance WizardScene
+const scheduleScene = require('./scenes/scheduleScene'); 
 
 // Impor handlers
 const { helpMessage } = require('./handlers/startHandler'); 
@@ -20,19 +20,13 @@ if (!config.telegramBotToken) {
 }
 
 const bot = new Telegraf(config.telegramBotToken);
-
-// Membuat Stage untuk Scenes
-// scheduleScene.id akan mengambil ID yang didefinisikan saat scene dibuat ('scheduleWizard')
 const stage = new Scenes.Stage([scheduleScene], { default: null }); 
 
-logger.info('Scenes yang terdaftar di stage:', stage.scenes.keys()); // Log untuk melihat scene yang terdaftar
+logger.info('Scenes yang terdaftar di stage:', stage.scenes.keys()); 
 
-// Middleware untuk session (harus sebelum stage)
 bot.use(session());
-// Middleware untuk Stage (Scenes)
 bot.use(stage.middleware());
 
-// Middleware untuk logging setiap update
 bot.use(async (ctx, next) => {
     const updateType = ctx.updateType;
     let messageContent = '';
@@ -59,8 +53,10 @@ const sendMainMenu = async (ctx, greetingMessage) => {
     let keyboard;
     if (loggedIn) {
         keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('🗓️ Jadwalkan Pesan', 'action_schedule_message')],
-            [Markup.button.callback('📋 Daftar Jadwal', 'action_list_scheduled'), Markup.button.callback('❌ Batalkan Jadwal', 'action_cancel_info')],
+            [Markup.button.callback('👤 Kirim ke Pribadi', 'action_schedule_personal')],
+            [Markup.button.callback('👥 Kirim ke Grup', 'action_schedule_group')],
+            [Markup.button.callback('🗓️ Daftar Jadwal Saya', 'action_list_scheduled')],
+            [Markup.button.callback('❌ Batalkan Jadwal', 'action_cancel_info')],
             [Markup.button.callback('🚪 Logout WhatsApp', 'action_logout_wa')],
             [Markup.button.callback('❓ Bantuan', 'action_help')]
         ]);
@@ -70,13 +66,26 @@ const sendMainMenu = async (ctx, greetingMessage) => {
             [Markup.button.callback('❓ Bantuan', 'action_help')]
         ]);
     }
-    await ctx.reply(greetingMessage, keyboard);
+    
+    if (ctx.callbackQuery) {
+        try {
+            // Coba edit pesan jika ini adalah callback dari tombol menu sebelumnya
+            await ctx.editMessageText(greetingMessage, keyboard).catch(async (e) => {
+                 // Jika gagal edit (misal pesan terlalu tua), kirim pesan baru
+                logger.warn('Gagal mengedit pesan menu (mungkin pesan terlalu tua), mengirim pesan baru.', e.message);
+                await ctx.reply(greetingMessage, keyboard);
+            });
+        } catch (e) {
+            logger.warn('Gagal mengedit pesan atau mengirim pesan baru setelah callback, mencoba reply biasa', e);
+            await ctx.reply(greetingMessage, keyboard); 
+        }
+    } else {
+        await ctx.reply(greetingMessage, keyboard);
+    }
 };
 
-// Handler untuk perintah /start
 bot.start(async (ctx) => {
     try {
-        // Jika pengguna sedang dalam scene, keluar dulu
         if (ctx.scene && ctx.scene.current) {
             logger.info(`Perintah /start diterima saat dalam scene ${ctx.scene.current.id}. Meninggalkan scene.`);
             await ctx.scene.leave();
@@ -95,18 +104,18 @@ bot.start(async (ctx) => {
     }
 });
 
-// Handler untuk tombol Bantuan
 bot.action('action_help', async (ctx) => {
     try {
         await ctx.answerCbQuery();
-        await ctx.reply(helpMessage); 
+        await ctx.reply(helpMessage, Markup.removeKeyboard()); 
+        const firstName = ctx.from.first_name || ctx.session.username || 'Pengguna';
+        await sendMainMenu(ctx, `Ada lagi yang bisa dibantu, ${firstName}?`);
     } catch (error) {
         logger.error('Error di action_help:', error);
         await ctx.reply('Gagal menampilkan bantuan.');
     }
 });
 
-// Handler untuk tombol Login WhatsApp
 bot.action('action_login_wa', async (ctx) => {
     try {
         await ctx.answerCbQuery();
@@ -117,7 +126,6 @@ bot.action('action_login_wa', async (ctx) => {
     }
 });
 
-// Handler untuk tombol Logout WhatsApp
 bot.action('action_logout_wa', async (ctx) => {
     try {
         await ctx.answerCbQuery();
@@ -129,25 +137,38 @@ bot.action('action_logout_wa', async (ctx) => {
     }
 });
 
-// Handler untuk tombol Jadwalkan Pesan -> Masuk ke Scene
-bot.action('action_schedule_message', async (ctx) => {
+const enterScheduleScene = async (ctx, targetType) => {
+    if (!isReady()) {
+        await ctx.reply('⚠️ Anda harus login ke WhatsApp terlebih dahulu sebelum menjadwalkan pesan.');
+        await sendMainMenu(ctx, 'Silakan login terlebih dahulu:'); 
+        return;
+    }
+    ctx.session.scheduleTargetType = targetType; 
+    logger.info(`Mencoba masuk ke scene: ${scheduleScene.id} dengan targetType: ${targetType}`);
+    await ctx.scene.enter(scheduleScene.id);
+};
+
+bot.action('action_schedule_personal', async (ctx) => {
     try {
-        await ctx.answerCbQuery();
-        if (!isReady()) {
-            await ctx.reply('⚠️ Anda harus login ke WhatsApp terlebih dahulu sebelum menjadwalkan pesan.');
-            await sendMainMenu(ctx, 'Silakan login terlebih dahulu:'); 
-            return;
-        }
-        // Gunakan ID scene yang sama dengan yang didefinisikan di scheduleScene.js
-        logger.info(`Mencoba masuk ke scene: ${scheduleScene.id}`); // Log ID scene yang akan dimasuki
-        await ctx.scene.enter(scheduleScene.id); // Ini seharusnya 'scheduleWizard'
+        await ctx.answerCbQuery('Memulai penjadwalan pesan pribadi...');
+        await enterScheduleScene(ctx, 'personal');
     } catch (error) {
-        logger.error('Error saat masuk ke scheduleWizard scene:', error);
-        await ctx.reply('Maaf, terjadi kesalahan saat memulai penjadwalan.');
+        logger.error('Error di action_schedule_personal:', error);
+        await ctx.reply('Maaf, terjadi kesalahan saat memulai penjadwalan pesan pribadi.');
     }
 });
 
-// Handler untuk tombol Daftar Terjadwal
+bot.action('action_schedule_group', async (ctx) => {
+    try {
+        await ctx.answerCbQuery('Memulai penjadwalan pesan grup...');
+        await enterScheduleScene(ctx, 'group');
+    } catch (error) {
+        logger.error('Error di action_schedule_group:', error);
+        await ctx.reply('Maaf, terjadi kesalahan saat memulai penjadwalan pesan grup.');
+    }
+});
+
+
 bot.action('action_list_scheduled', async (ctx) => {
     try {
         await ctx.answerCbQuery();
@@ -163,7 +184,6 @@ bot.action('action_list_scheduled', async (ctx) => {
     }
 });
 
-// Handler untuk tombol Batalkan Jadwal (memberi info dulu)
 bot.action('action_cancel_info', async (ctx) => {
     try {
         await ctx.answerCbQuery();
@@ -172,15 +192,13 @@ bot.action('action_cancel_info', async (ctx) => {
             await sendMainMenu(ctx, 'Silakan login terlebih dahulu:');
             return;
         }
-        await ctx.reply('Untuk membatalkan jadwal, silakan kirim perintah:\n/batalkan <ID_Pesan_Terjadwal>\nAnda bisa mendapatkan ID Pesan dari menu "Daftar Jadwal".');
+        await ctx.reply('Untuk membatalkan jadwal, silakan kirim perintah:\n/batalkan <ID_Pesan_Terjadwal>\nAnda bisa mendapatkan ID Pesan dari menu "Daftar Jadwal Saya".');
     } catch (error) {
         logger.error('Error di action_cancel_info:', error);
         await ctx.reply('Gagal menampilkan info pembatalan.');
     }
 });
 
-
-// Perintah lama yang mungkin masih relevan atau untuk akses cepat
 bot.help(async (ctx) => { 
     try {
         if (ctx.scene && ctx.scene.current) {
@@ -202,14 +220,13 @@ bot.help(async (ctx) => {
 bot.command('daftarterjadwal', listScheduledHandler);
 bot.command('batalkan', cancelScheduledHandler); 
 
-
-// Mengatur perintah bot di Telegram agar muncul di menu
 const commands = require('./commands'); 
 const relevantCommands = commands.filter(cmd => ![
     'login_wa', 
     'logout_wa', 
     'jadwalkanpesan', 
     'daftarterjadwal', 
+    'start' 
 ].includes(cmd.command)); 
 bot.telegram.setMyCommands(relevantCommands).then(() => {
     logger.info('Perintah bot berhasil diatur di Telegram (menu).');
@@ -217,11 +234,9 @@ bot.telegram.setMyCommands(relevantCommands).then(() => {
     logger.error('Gagal mengatur perintah bot di Telegram (menu):', err);
 });
 
-
-// Penanganan error global Telegraf
 bot.catch((err, ctx) => {
     logger.error(`Error pada Telegraf untuk ${ctx.updateType} dari user ${ctx.from.id}`, err);
-    if (ctx.scene && ctx.scene.current) { // Jika error terjadi di dalam scene, coba tinggalkan scene
+    if (ctx.scene && ctx.scene.current) { 
         logger.warn(`Error terjadi di dalam scene ${ctx.scene.current.id}. Mencoba meninggalkan scene.`);
         ctx.scene.leave().catch(e => logger.error('Gagal meninggalkan scene pada error global', e));
     }

@@ -1,21 +1,18 @@
 // src/whatsapp/client.js
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode'); // Untuk generate QR sebagai data URI
+const qrcode = require('qrcode');
 const logger = require('../utils/logger');
 const config = require('../config');
 const path = require('path');
-const fs = require('fs'); // Impor fs untuk operasi file sistem
+const fs = require('fs');
 
-// Inisialisasi klien WhatsApp
 const waClient = new Client({
     authStrategy: new LocalAuth({ 
-        dataPath: path.join(__dirname, '../../sessions'), // Folder untuk menyimpan sesi
-        // Tentukan clientId berdasarkan waSessionFile dari config, hilangkan .json jika ada
-        // Jika waSessionFile tidak ada di config, clientId akan undefined, dan LocalAuth akan default ke 'session'
+        dataPath: path.join(__dirname, '../../sessions'),
         clientId: config.waSessionFile ? config.waSessionFile.replace('.json', '') : undefined 
     }),
     puppeteer: {
-        headless: true, // Jalankan headless untuk server
+        headless: true,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -23,15 +20,15 @@ const waClient = new Client({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            // '--single-process', // opsional, bisa mengurangi penggunaan memori
             '--disable-gpu'
         ],
-        // timeout: 120000, // Opsional: Tambahkan timeout yang lebih lama jika perlu (default 30 detik)
+        // timeout: 120000, // Opsional, jika inisialisasi sering timeout
     }
 });
 
 let qrCodeDataUrl = null;
 let isWhatsAppReady = false;
+let knownGroups = []; // Variabel untuk menyimpan daftar grup yang diikuti bot
 
 waClient.on('qr', async (qr) => {
     logger.info('QR Code diterima, silakan pindai.');
@@ -46,15 +43,14 @@ waClient.on('qr', async (qr) => {
 
 waClient.on('authenticated', () => {
     logger.info('WhatsApp terautentikasi!');
-    qrCodeDataUrl = null; // Hapus QR setelah autentikasi
+    qrCodeDataUrl = null; 
 });
 
 waClient.on('auth_failure', async (msg) => { 
     logger.error('Autentikasi WhatsApp GAGAL:', msg);
     isWhatsAppReady = false;
-    // Tentukan nama direktori sesi yang benar berdasarkan clientId
     const clientId = config.waSessionFile ? config.waSessionFile.replace('.json', '') : undefined;
-    const sessionDirName = `session${clientId ? `-${clientId}` : ''}`; // Jika clientId undefined, LocalAuth default ke 'session'
+    const sessionDirName = `session${clientId ? `-${clientId}` : ''}`;
     const sessionDirPath = path.join(__dirname, '../../sessions', sessionDirName);
     try {
         if (fs.existsSync(sessionDirPath)) {
@@ -67,17 +63,36 @@ waClient.on('auth_failure', async (msg) => {
     }
 });
 
-waClient.on('ready', () => {
+waClient.on('ready', async () => { 
     isWhatsAppReady = true;
-    qrCodeDataUrl = null; // Pastikan QR null saat ready
+    qrCodeDataUrl = null; 
     logger.info('Klien WhatsApp SIAP!');
+    
+    // Tambahkan penundaan kecil sebelum mengambil chat, untuk memberi waktu WhatsApp Web stabil
+    setTimeout(async () => {
+        try {
+            logger.info('Mencoba mengambil daftar chat setelah penundaan...');
+            const chats = await waClient.getChats();
+            knownGroups = chats.filter(chat => chat.isGroup).map(group => ({
+                name: group.name,
+                id: group.id._serialized
+            }));
+            logger.info(`Ditemukan dan disimpan ${knownGroups.length} grup yang diikuti bot.`);
+            // knownGroups.forEach(g => logger.info(` - Grup: ${g.name} (ID: ${g.id})`));
+        } catch (e) {
+            logger.error('Gagal mengambil daftar grup saat ready (setelah penundaan):', e);
+            // Biarkan knownGroups tetap array kosong jika gagal
+            knownGroups = []; 
+        }
+    }, 5000); // Penundaan 5 detik (5000 ms), bisa disesuaikan
 });
 
 waClient.on('disconnected', (reason) => {
     logger.warn('Klien WhatsApp terputus:', reason);
     isWhatsAppReady = false;
-    // Jika terputus karena logout, sesi sudah dihapus oleh fungsi logoutWhatsAppClient
+    knownGroups = []; // Kosongkan daftar grup jika terputus
 });
+
 
 function initializeWhatsAppClient() {
     logger.info('Menginisialisasi klien WhatsApp...');
@@ -94,7 +109,6 @@ async function logoutWhatsAppClient() {
         logger.warn('Klien WhatsApp tidak diinisialisasi, tidak ada yang perlu di-logout.');
         return { success: false, message: 'Klien tidak diinisialisasi.' };
     }
-
     try {
         if (isWhatsAppReady) { 
             await waClient.logout(); 
@@ -102,9 +116,9 @@ async function logoutWhatsAppClient() {
         } else {
             logger.info('Klien WhatsApp tidak dalam kondisi ready, mungkin sudah terputus. Lanjut proses pembersihan.');
         }
-        
         isWhatsAppReady = false;
         qrCodeDataUrl = null;
+        knownGroups = []; // Kosongkan daftar grup saat logout
 
         const clientId = config.waSessionFile ? config.waSessionFile.replace('.json', '') : undefined;
         const sessionDirName = `session${clientId ? `-${clientId}` : ''}`;
@@ -117,25 +131,103 @@ async function logoutWhatsAppClient() {
             return { success: true, message: 'Berhasil logout dan menghapus data sesi WhatsApp.' };
         } else {
             logger.warn(`Direktori sesi ${sessionDirPath} tidak ditemukan untuk dihapus.`);
-            return { success: true, message: 'Berhasil logout (data sesi tidak ditemukan, mungkin sudah terhapus atau belum pernah dibuat).' };
+            return { success: true, message: 'Berhasil logout (data sesi tidak ditemukan).' };
         }
     } catch (error) {
         logger.error('Error saat proses logout WhatsApp:', error);
         isWhatsAppReady = false;
         qrCodeDataUrl = null;
+        knownGroups = [];
         return { success: false, message: `Error saat logout: ${error.message}` };
     }
 }
 
+/**
+ * Mencari grup berdasarkan nama dari daftar grup yang diketahui.
+ * @param {string} name Nama grup yang dicari.
+ * @returns {Array<{name: string, id: string}>} Array grup yang cocok.
+ */
+function findGroupByName(name) {
+    if (!name || typeof name !== 'string' || !isWhatsAppReady) {
+        logger.warn(`findGroupByName dipanggil dengan nama tidak valid atau WA tidak siap. Nama: ${name}, WA Ready: ${isWhatsAppReady}`);
+        return [];
+    }
+    const searchTerm = name.toLowerCase().trim();
+    if (knownGroups.length === 0) {
+        logger.warn('findGroupByName: Daftar knownGroups kosong. Mungkin getChats() gagal atau belum selesai.');
+    }
+    return knownGroups.filter(group => group.name && group.name.toLowerCase().includes(searchTerm));
+}
+
+async function joinGroupByInviteAndGetInfo(inviteCode) {
+    // ... (fungsi joinGroupByInviteAndGetInfo tetap sama seperti versi terakhir Anda) ...
+    if (!isWhatsAppReady) {
+        return { success: false, message: 'Klien WhatsApp belum siap.' };
+    }
+    if (!inviteCode || typeof inviteCode !== 'string' || inviteCode.trim() === '') {
+        return { success: false, message: 'Kode undangan tidak valid.' };
+    }
+
+    try {
+        logger.info(`Mencoba bergabung dengan grup menggunakan kode: ${inviteCode}`);
+        const groupId = await waClient.acceptInvite(inviteCode.trim());
+        logger.info(`Berhasil bergabung dengan grup, ID Grup: ${groupId}`);
+
+        const chat = await waClient.getChatById(groupId);
+        if (chat && chat.isGroup) {
+            logger.info(`Detail grup ditemukan: Nama="${chat.name}", ID=${chat.id._serialized}`);
+            if (!knownGroups.find(g => g.id === chat.id._serialized)) {
+                knownGroups.push({ name: chat.name, id: chat.id._serialized });
+                logger.info(`Grup baru "${chat.name}" ditambahkan ke knownGroups.`);
+            }
+            return { 
+                success: true, 
+                groupId: chat.id._serialized, 
+                groupName: chat.name, 
+                message: `Berhasil bergabung dengan grup "${chat.name}".` 
+            };
+        } else {
+            logger.warn(`Berhasil bergabung dengan grup ID ${groupId}, tetapi gagal mendapatkan detail chat atau bukan grup.`);
+            return { 
+                success: true, 
+                groupId: groupId, 
+                groupName: 'Nama Tidak Diketahui', 
+                message: `Berhasil bergabung dengan grup (ID: ${groupId}), tetapi nama grup tidak dapat diambil.` 
+            };
+        }
+    } catch (error) {
+        logger.error(`Gagal bergabung dengan grup menggunakan kode ${inviteCode}:`, error);
+        let userMessage = 'Gagal bergabung dengan grup.';
+        let needsName = false;
+
+        if (error.message) {
+            if (error.message.includes('invite_code_expired') || error.message.includes('invalid')) {
+                userMessage = 'Gagal bergabung: Link undangan sudah kedaluwarsa atau tidak valid.';
+            } else if (error.message.includes('Group full')) {
+                userMessage = 'Gagal bergabung: Grup sudah penuh.';
+            } else if (error.message.includes('already in group') || (error.message.includes('failed to accept invite') && error.message.includes('contact is already a group participant'))) {
+                userMessage = 'Bot sudah menjadi anggota grup ini. Jika Anda tahu nama grupnya, bot akan mencoba mencarinya.';
+                needsName = true; 
+                logger.warn(`Bot sudah ada di grup dengan kode ${inviteCode}. Membutuhkan nama grup untuk pencarian.`);
+                return { success: false, message: userMessage, needsName: true, inviteCodeUsed: inviteCode };
+            }
+        }
+        return { success: false, message: userMessage, needsName: needsName };
+    }
+}
 
 module.exports = {
     initializeWhatsAppClient,
     logoutWhatsAppClient,
+    joinGroupByInviteAndGetInfo,
+    findGroupByName, 
+    getKnownGroups: () => knownGroups, 
     getWhatsAppClient: () => waClient,
     isReady: () => isWhatsAppReady,
     getQrCodeDataUrl: () => qrCodeDataUrl,
     clearQrCodeDataUrl: () => { qrCodeDataUrl = null; },
     sendWhatsAppMessage: async (numberOrGroupId, message) => {
+        // ... (fungsi sendWhatsAppMessage tetap sama) ...
         if (!isWhatsAppReady) {
             logger.warn('Klien WhatsApp belum siap untuk mengirim pesan.');
             throw new Error('WhatsApp client not ready.');
@@ -147,9 +239,7 @@ module.exports = {
                 if (cleanNumber.startsWith('0')) {
                     cleanNumber = '62' + cleanNumber.substring(1); 
                 } else if (!cleanNumber.startsWith('62')) {
-                     // Asumsi jika tidak ada '0' di depan dan tidak ada '62', mungkin sudah format internasional tanpa '+'
-                     // atau nomor pendek yang mungkin tidak valid. Validasi panjang bisa ditambahkan.
-                     if(cleanNumber.length < 9 || cleanNumber.length > 15) { // Contoh validasi panjang sederhana
+                     if(cleanNumber.length < 9 || cleanNumber.length > 15) { 
                         logger.warn(`Nomor ${numberOrGroupId} terlihat tidak valid setelah dibersihkan: ${cleanNumber}`);
                      }
                 }
