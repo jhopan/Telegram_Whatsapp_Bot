@@ -198,5 +198,21 @@
     "userId": 1491946180,
     "sent": true,
     "id": "1747884670314"
+  },
+  {
+    "target": "6281287258141@c.us",
+    "dateTime": "2025-05-22T05:38:00.000Z",
+    "text": "Hai sam pesan otomatis ini",
+    "userId": 1491946180,
+    "sent": true,
+    "id": "1747892123325"
+  },
+  {
+    "target": "628980785451@c.us",
+    "dateTime": "2025-05-22T05:41:00.000Z",
+    "text": "Hai ganteng",
+    "userId": 1491946180,
+    "sent": true,
+    "id": "1747892379833"
   }
 ]

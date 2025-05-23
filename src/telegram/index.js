@@ -4,43 +4,43 @@ const config = require('../config');
 const logger = require('../utils/logger');
 
 // Impor scenes
-const scheduleScene = require('./scenes/scheduleScene'); 
+// const scheduleScene = require('./scenes/scheduleScene'); // <-- DINONAKTIFKAN
+const personalScheduleScene = require('./scenes/personalScheduleScene'); // Impor scene pribadi
+const groupScheduleScene = require('./scenes/groupScheduleScene');    // Impor scene grup
 const cancelScene = require('./scenes/cancelScene'); 
 
 // Impor handlers
 const { helpMessage } = require('./handlers/startHandler'); 
 const loginHandler = require('./handlers/loginHandler');
 const listScheduledHandler = require('./handlers/listScheduledHandler');
-// const cancelScheduledHandler = require('./handlers/cancelScheduledHandler'); // Digantikan oleh scene
+const createUnknownHandler = require('./handlers/unknownHandler');
 const logoutHandler = require('./handlers/logoutHandler'); 
 const { isReady } = require('../whatsapp/client'); 
 
 // --- Konfigurasi Grup Wajib ---
-// GANTI DENGAN ID GRUP TELEGRAM ANDA YANG SEBENARNYA (biasanya negatif untuk grup/supergrup)
-const TARGET_GROUP_ID = -1002608347193; // <--- NILAI INI SUDAH DIGANTI SESUAI SCREENSHOT ANDA
-const TARGET_GROUP_INVITE_LINK = 'https://t.me/+9sPvJmTqZU8yZDZl'; // Link yang Anda berikan
-const MINIMUM_MEMBER_STATUS = ['member', 'administrator', 'creator']; // Status yang dianggap sudah join
+const TARGET_GROUP_ID = -1002608347193; 
+const TARGET_GROUP_INVITE_LINK = 'https://t.me/+9sPvJmTqZU8yZDZl'; 
+const MINIMUM_MEMBER_STATUS = ['member', 'administrator', 'creator']; 
 
 if (!config.telegramBotToken) {
     logger.error('Token Bot Telegram tidak ditemukan! Atur TELEGRAM_BOT_TOKEN di file .env');
     process.exit(1);
 }
-// Anda bisa menghapus atau menyesuaikan pengecekan placeholder ini sekarang karena ID sudah diisi
-// if (TARGET_GROUP_ID === -1001234567890 && TARGET_GROUP_INVITE_LINK === 'https://t.me/your_group_invite_link') {
-//     logger.warn('PERHATIAN: TARGET_GROUP_ID dan TARGET_GROUP_INVITE_LINK belum diatur dengan benar di src/telegram/index.js! Fitur force join mungkin tidak berfungsi.');
-// } else if (TARGET_GROUP_ID === -1001234567890) {
-//    logger.warn('PERHATIAN: TARGET_GROUP_ID masih menggunakan nilai placeholder. Fitur force join mungkin tidak berfungsi dengan benar.');
-// }
-
 
 const bot = new Telegraf(config.telegramBotToken);
-const stage = new Scenes.Stage([scheduleScene, cancelScene], { default: null }); 
+// --- UBAH STAGE ---
+// Daftarkan scene baru (personal & group) dan hapus yang lama
+const stage = new Scenes.Stage(
+    [personalScheduleScene, groupScheduleScene, cancelScene], 
+    { default: null }
+); 
 
 logger.info('Scenes yang terdaftar di stage:', Array.from(stage.scenes.keys())); 
 
 bot.use(session());
 bot.use(stage.middleware());
 
+// Middleware Logging (Tetap Sama)
 bot.use(async (ctx, next) => {
     const updateType = ctx.updateType;
     let messageContent = '';
@@ -60,18 +60,12 @@ bot.use(async (ctx, next) => {
     await next(); 
 });
 
-// Fungsi untuk mengecek keanggotaan grup
+// Fungsi checkGroupMembership (Tetap Sama)
 async function checkGroupMembership(ctx) {
-    // Hapus pengecekan placeholder karena ID sudah diisi
-    // if (!TARGET_GROUP_ID || TARGET_GROUP_ID === -1001234567890) { 
-    //     logger.warn('Pengecekan keanggotaan grup dilewati karena TARGET_GROUP_ID belum diisi dengan benar.');
-    //     return false; 
-    // }
-    if (!TARGET_GROUP_ID) { // Cek jika TARGET_GROUP_ID null atau undefined
+    if (!TARGET_GROUP_ID) {
         logger.error('TARGET_GROUP_ID tidak terdefinisi atau null. Pengecekan keanggotaan tidak bisa dilakukan.');
-        return false; // Anggap tidak join jika ID tidak ada
+        return false;
     }
-
     try {
         const member = await ctx.telegram.getChatMember(TARGET_GROUP_ID, ctx.from.id);
         logger.info(`Status keanggotaan user ${ctx.from.id} di grup ${TARGET_GROUP_ID}: ${member.status}`);
@@ -87,7 +81,7 @@ async function checkGroupMembership(ctx) {
     }
 }
 
-// Fungsi untuk mengirim pesan permintaan join grup
+// Fungsi sendJoinGroupRequest (Tetap Sama)
 async function sendJoinGroupRequest(ctx, customMessage = '') {
     const message = `${customMessage}Anda harus bergabung dengan grup kami terlebih dahulu untuk menggunakan bot ini.\n\nSilakan bergabung melalui link di bawah ini, lalu klik tombol "Saya Sudah Bergabung".`;
     await ctx.reply(message, Markup.inlineKeyboard([
@@ -96,7 +90,7 @@ async function sendJoinGroupRequest(ctx, customMessage = '') {
     ]));
 }
 
-// Fungsi untuk menampilkan menu utama inline
+// Fungsi sendMainMenu (Tetap Sama)
 const sendMainMenu = async (ctx, greetingMessage) => {
     const loggedInToWhatsApp = isReady(); 
     let keyboard;
@@ -133,9 +127,9 @@ const sendMainMenu = async (ctx, greetingMessage) => {
     }
 };
 
-// Fungsi untuk mengirim pesan bantuan utama
+// Fungsi sendHelpMessage (Tetap Sama)
 const sendHelpMessage = async (ctx) => {
-    const isMember = await checkGroupMembership(ctx);
+    const isMember = await checkGroupMembership(ctx); // <-- Aktifkan lagi jika perlu
     if (!isMember) {
         await sendJoinGroupRequest(ctx, 'Untuk mengakses bantuan dan fitur lainnya, ');
         return;
@@ -146,10 +140,11 @@ const sendHelpMessage = async (ctx) => {
     if (!isReady()){
         menuGreeting = 'Silakan login ke WhatsApp atau lihat bantuan di atas.';
     }
-    await sendMainMenu(ctx, menuGreeting);
+    await sendMainMenu(ctx, menuGreeting); // <-- Aktifkan lagi jika ingin menu muncul setelah /help
 };
 
 
+// bot.start (Tetap Sama)
 bot.start(async (ctx) => {
     try {
         if (ctx.scene && ctx.scene.current) {
@@ -177,7 +172,7 @@ bot.start(async (ctx) => {
     }
 });
 
-// Handler untuk tombol "Saya Sudah Bergabung / Cek Ulang"
+// bot.action('action_check_membership') (Tetap Sama)
 bot.action('action_check_membership', async (ctx) => {
     try {
         await ctx.answerCbQuery('Memeriksa keanggotaan...');
@@ -201,7 +196,7 @@ bot.action('action_check_membership', async (ctx) => {
     }
 });
 
-
+// bot.action('action_help') (Tetap Sama)
 bot.action('action_help', async (ctx) => {
     try {
         await ctx.answerCbQuery();
@@ -212,6 +207,7 @@ bot.action('action_help', async (ctx) => {
     }
 });
 
+// bot.action('action_login_wa') (Tetap Sama)
 bot.action('action_login_wa', async (ctx) => {
     try {
         const isMember = await checkGroupMembership(ctx);
@@ -228,6 +224,7 @@ bot.action('action_login_wa', async (ctx) => {
     }
 });
 
+// bot.action('action_logout_wa') (Tetap Sama)
 bot.action('action_logout_wa', async (ctx) => {
     try {
         await ctx.answerCbQuery();
@@ -239,7 +236,9 @@ bot.action('action_logout_wa', async (ctx) => {
     }
 });
 
-const enterScheduleScene = async (ctx, targetType) => {
+// --- UBAH FUNGSI INI ---
+// Fungsi enterScheduleScene kini menerima sceneId
+const enterScheduleScene = async (ctx, sceneId) => {
     const isMember = await checkGroupMembership(ctx);
     if (!isMember) {
         await sendJoinGroupRequest(ctx, 'Untuk menjadwalkan pesan, ');
@@ -250,32 +249,34 @@ const enterScheduleScene = async (ctx, targetType) => {
         await sendMainMenu(ctx, 'Silakan login terlebih dahulu:'); 
         return;
     }
-    ctx.session.scheduleTargetType = targetType; 
-    logger.info(`Mencoba masuk ke scene: ${scheduleScene.id} dengan targetType: ${targetType}`);
-    await ctx.scene.enter(scheduleScene.id);
+    // Hapus setting ctx.session.scheduleTargetType 
+    logger.info(`Mencoba masuk ke scene: ${sceneId}`);
+    await ctx.scene.enter(sceneId); // Masuk ke scene berdasarkan ID
 };
 
+// --- UBAH ACTION INI ---
 bot.action('action_schedule_personal', async (ctx) => {
     try {
         await ctx.answerCbQuery('Memulai penjadwalan pesan pribadi...');
-        await enterScheduleScene(ctx, 'personal');
+        await enterScheduleScene(ctx, personalScheduleScene.id); // Panggil dengan ID scene pribadi
     } catch (error) {
         logger.error('Error di action_schedule_personal:', error);
         await ctx.reply('Maaf, terjadi kesalahan saat memulai penjadwalan pesan pribadi.');
     }
 });
 
+// --- UBAH ACTION INI ---
 bot.action('action_schedule_group', async (ctx) => {
     try {
         await ctx.answerCbQuery('Memulai penjadwalan pesan grup...');
-        await enterScheduleScene(ctx, 'group');
+        await enterScheduleScene(ctx, groupScheduleScene.id); // Panggil dengan ID scene grup
     } catch (error) {
         logger.error('Error di action_schedule_group:', error);
         await ctx.reply('Maaf, terjadi kesalahan saat memulai penjadwalan pesan grup.');
     }
 });
 
-
+// bot.action('action_list_scheduled') (Tetap Sama)
 bot.action('action_list_scheduled', async (ctx) => {
     try {
         const isMember = await checkGroupMembership(ctx);
@@ -297,6 +298,7 @@ bot.action('action_list_scheduled', async (ctx) => {
     }
 });
 
+// bot.action('action_enter_cancel_scene') (Tetap Sama)
 bot.action('action_enter_cancel_scene', async (ctx) => { 
     try {
         const isMember = await checkGroupMembership(ctx);
@@ -318,7 +320,7 @@ bot.action('action_enter_cancel_scene', async (ctx) => {
     }
 });
 
-
+// bot.help (Tetap Sama)
 bot.help(async (ctx) => { 
     try {
         if (ctx.scene && ctx.scene.current) {
@@ -331,34 +333,22 @@ bot.help(async (ctx) => {
     }
 });
 
-bot.command('daftarterjadwal', async (ctx) => {
-    const isMember = await checkGroupMembership(ctx);
-    if (!isMember) { return sendJoinGroupRequest(ctx); }
-    await listScheduledHandler(ctx);
-});
-bot.command('batalkan', async (ctx) => {
-    const isMember = await checkGroupMembership(ctx);
-    if (!isMember) { return sendJoinGroupRequest(ctx); }
-
-    if (ctx.scene && ctx.scene.current) { 
-        logger.info('/batalkan diterima saat dalam scene, mungkin pengguna ingin /batalscene');
-        return ctx.reply('Jika ingin membatalkan proses saat ini, kirim /batalscene. Jika ingin membatalkan jadwal yang sudah ada, gunakan tombol "Batalkan Jadwal" dari menu /start.');
-    }
-    logger.info('Perintah /batalkan diterima, masuk ke cancelWizard scene.');
-    await ctx.scene.enter(cancelScene.id); 
-});
-
-
+// setMyCommands (Tetap Sama)
 const commands = require('./commands'); 
-const relevantCommands = commands.filter(cmd => ![
-    'login_wa', 'logout_wa', 'jadwalkanpesan', 'start'
-].includes(cmd.command)); 
+const relevantCommands = commands.filter(cmd => 
+    ['start', 'help'].includes(cmd.command)
+); 
 bot.telegram.setMyCommands(relevantCommands).then(() => {
     logger.info('Perintah bot berhasil diatur di Telegram (menu).');
 }).catch(err => {
     logger.error('Gagal mengatur perintah bot di Telegram (menu):', err);
 });
 
+// unknownHandler (Tetap Sama, Pastikan Pendaftaran Benar)
+const unknownHandler = createUnknownHandler(checkGroupMembership, sendJoinGroupRequest);
+bot.on(['text', 'sticker', 'photo'], unknownHandler); // Pastikan ini benar (menggunakan array)
+
+// bot.catch (Tetap Sama)
 bot.catch((err, ctx) => {
     logger.error(`Error pada Telegraf untuk ${ctx.updateType} dari user ${ctx.from.id}`, err);
     if (ctx.scene && ctx.scene.current) { 

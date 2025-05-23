@@ -7,84 +7,83 @@ const CANCEL_WIZARD_SCENE_ID = 'cancelWizard';
 
 const cancelScene = new Scenes.WizardScene(
     CANCEL_WIZARD_SCENE_ID,
-    // Langkah 0: Tampilkan jadwal dan minta ID
+    // Langkah 0: Tampilkan jadwal dengan nomor urut dan minta nomor urut
     async (ctx) => {
-        logger.info(`[SCENE: ${CANCEL_WIZARD_SCENE_ID}] Langkah 0: Meminta ID Pembatalan. User: ${ctx.from.id}`);
+        logger.info(`[SCENE: ${CANCEL_WIZARD_SCENE_ID}] Langkah 0: Meminta Pilihan Pembatalan. User: ${ctx.from.id}`);
         try {
-            const userId = ctx.from.id;
-            const schedules = storageService.getAllSchedules().filter(s => s.userId === userId && !s.sent);
+            const userId = String(ctx.from.id);
+            const activeSchedules = storageService.getAllSchedules().filter(s => String(s.userId) === userId && !s.sent);
 
-            if (schedules.length === 0) {
+            if (activeSchedules.length === 0) {
                 await ctx.reply('Anda tidak memiliki pesan terjadwal yang aktif untuk dibatalkan.');
                 return ctx.scene.leave();
             }
 
-            let message = 'Berikut adalah daftar pesan terjadwal Anda yang aktif:\n\n';
-            schedules.forEach(s => {
-                const scheduledTime = new Date(s.dateTime);
-                message += `ID: ${s.id}\n`;
-                message += `Target: ${s.target}\n`;
-                message += `Waktu: ${scheduledTime.toLocaleString('id-ID', { timeZone: 'Asia/Makassar' })}\n`; // Sesuaikan timeZone jika perlu
-                message += `Pesan: ${s.text.substring(0, 30)}${s.text.length > 30 ? '...' : ''}\n`;
-                message += `-----------------------------\n`;
-            });
-            message += '\nSilakan masukkan ID pesan yang ingin Anda batalkan.\nKirim /batalscene untuk keluar dari proses ini.';
-            
-            // Kirim pesan dalam beberapa bagian jika terlalu panjang
-            const MAX_MESSAGE_LENGTH = 4096;
-            if (message.length > MAX_MESSAGE_LENGTH) {
-                await ctx.reply('Daftar pesan terjadwal Anda terlalu panjang untuk ditampilkan sekaligus. Berikut adalah sebagian:');
-                let currentPart = '';
-                for (const schedule of schedules) {
-                    const scheduleLine = `ID: ${schedule.id}, Target: ${schedule.target}, Waktu: ${new Date(schedule.dateTime).toLocaleString('id-ID', { timeZone: 'Asia/Makassar' })}, Pesan: ${schedule.text.substring(0,20)}...\n`;
-                    if (currentPart.length + scheduleLine.length > MAX_MESSAGE_LENGTH - 200) { // -200 untuk pesan permintaan ID
-                        await ctx.reply(currentPart);
-                        currentPart = '';
-                    }
-                    currentPart += scheduleLine;
-                }
-                if (currentPart) {
-                    await ctx.reply(currentPart);
-                }
-                await ctx.reply('Silakan masukkan ID pesan yang ingin Anda batalkan dari daftar di atas.\nKirim /batalscene untuk keluar.');
+            let messageText = 'Berikut adalah daftar pesan terjadwal Anda yang aktif:\n\n';
+            // Simpan jadwal yang ditampilkan untuk referensi di langkah berikutnya
+            ctx.scene.session.state.displayedSchedules = activeSchedules;
 
-            } else {
-                await ctx.reply(message);
-            }
+            activeSchedules.forEach((s, index) => {
+                const scheduledTime = new Date(s.dateTime);
+                messageText += `${index + 1}. Target: ${s.targetDisplayName || s.target}\n`;
+                messageText += `   Waktu: ${scheduledTime.toLocaleString('id-ID', { timeZone: 'Asia/Makassar' })}\n`;
+                messageText += `   Pesan: ${s.text ? s.text.substring(0, 30) : (s.mediaInfo ? `Media (${s.mediaInfo.filename || 'file'})` : 'Tidak ada teks')}${s.text && s.text.length > 30 ? '...' : ''}\n`;
+                messageText += `   (ID Asli: ${s.id})\n`; // Tampilkan ID asli untuk referensi jika perlu
+                messageText += `-----------------------------\n`;
+            });
+            messageText += '\nSilakan masukkan nomor urut pesan yang ingin Anda batalkan (misalnya: 1).\nKirim /batalscene untuk keluar dari proses ini.';
             
-            return ctx.wizard.next(); // Maju untuk menunggu input ID
+            // Tidak perlu logika pesan terpecah yang kompleks untuk daftar bernomor,
+            // pengguna bisa scroll jika daftarnya panjang. Atau bisa diimplementasikan pagination nanti.
+            await ctx.reply(messageText);
+            
+            return ctx.wizard.next(); // Maju untuk menunggu input nomor urut
         } catch (e) {
             logger.error(`[SCENE: ${CANCEL_WIZARD_SCENE_ID}] Error di Langkah 0:`, e);
             await ctx.reply('Terjadi kesalahan saat menampilkan daftar jadwal.');
             return ctx.scene.leave();
         }
     },
-    // Langkah 1: Terima ID dan proses pembatalan
+    // Langkah 1: Terima nomor urut dan proses pembatalan
     async (ctx) => {
-        logger.info(`[SCENE: ${CANCEL_WIZARD_SCENE_ID}] Langkah 1: Memproses ID Pembatalan. User: ${ctx.from.id}`);
+        logger.info(`[SCENE: ${CANCEL_WIZARD_SCENE_ID}] Langkah 1: Memproses Pilihan Pembatalan. User: ${ctx.from.id}`);
         try {
             if (!ctx.message || !ctx.message.text) {
-                await ctx.reply('Input tidak valid. Silakan masukkan ID pesan yang ingin dibatalkan atau kirim /batalscene.');
+                await ctx.reply('Input tidak valid. Silakan masukkan nomor urut pesan yang ingin dibatalkan atau kirim /batalscene.');
                 return; // Tetap di langkah ini
             }
 
-            const scheduleIdToCancel = ctx.message.text.trim();
-            const userId = ctx.from.id;
-            const schedules = storageService.getAllSchedules(); // Ambil semua untuk verifikasi kepemilikan
-            const scheduleExists = schedules.find(s => s.id === scheduleIdToCancel && s.userId === userId && !s.sent);
+            const displayedSchedules = ctx.scene.session.state.displayedSchedules;
+            if (!displayedSchedules || displayedSchedules.length === 0) {
+                logger.warn(`[SCENE] Langkah 1: displayedSchedules tidak ada di session state. User: ${ctx.from.id}`);
+                await ctx.reply('Terjadi kesalahan sesi. Silakan coba lagi dari awal.');
+                return ctx.scene.leave();
+            }
 
-            if (!scheduleExists) {
-                await ctx.reply(`Pesan terjadwal dengan ID "${scheduleIdToCancel}" tidak ditemukan, bukan milik Anda, atau sudah terkirim/dibatalkan.\nSilakan coba lagi atau kirim /batalscene.`);
+            const choiceNumber = parseInt(ctx.message.text.trim(), 10);
+
+            if (isNaN(choiceNumber) || choiceNumber < 1 || choiceNumber > displayedSchedules.length) {
+                await ctx.reply(`Pilihan tidak valid. Masukkan nomor urut antara 1 dan ${displayedSchedules.length}, atau kirim /batalscene.`);
                 return; // Tetap di langkah ini
             }
+
+            const scheduleToCancel = displayedSchedules[choiceNumber - 1]; // Ambil jadwal berdasarkan nomor urut (index array = nomor urut - 1)
+            const scheduleIdToCancel = scheduleToCancel.id;
+            const userId = String(ctx.from.id); 
+
+            // Verifikasi ulang kepemilikan dan status (meskipun seharusnya sudah difilter)
+            if (String(scheduleToCancel.userId) !== userId || scheduleToCancel.sent) {
+                 await ctx.reply(`Pesan dengan ID "${scheduleIdToCancel}" tidak valid untuk dibatalkan saat ini.`);
+                 return ctx.scene.leave();
+            }
+
 
             if (storageService.cancelSchedule(scheduleIdToCancel)) {
-                logger.info(`Pesan ${scheduleIdToCancel} berhasil dibatalkan oleh user ${userId}`);
-                await ctx.reply(`✅ Pesan terjadwal dengan ID "${scheduleIdToCancel}" berhasil dibatalkan.`);
+                logger.info(`Pesan ${scheduleIdToCancel} (pilihan nomor ${choiceNumber}) berhasil dibatalkan oleh user ${userId}`);
+                await ctx.reply(`✅ Pesan terjadwal nomor ${choiceNumber} (ID: "${scheduleIdToCancel}") berhasil dibatalkan.`);
             } else {
-                // Ini seharusnya tidak terjadi jika scheduleExists benar, tapi sebagai fallback
-                logger.warn(`Gagal membatalkan scheduleId ${scheduleIdToCancel} padahal ditemukan.`);
-                await ctx.reply(`⚠️ Gagal membatalkan pesan terjadwal dengan ID "${scheduleIdToCancel}".`);
+                logger.warn(`Gagal membatalkan scheduleId ${scheduleIdToCancel} padahal dipilih.`);
+                await ctx.reply(`⚠️ Gagal membatalkan pesan terjadwal nomor ${choiceNumber} (ID: "${scheduleIdToCancel}"). Mungkin sudah tidak ada.`);
             }
             return ctx.scene.leave();
         } catch (e) {
@@ -101,10 +100,10 @@ cancelScene.command('batalscene', async (ctx) => {
     return ctx.scene.leave();
 });
 
-// Menangani pesan yang tidak diharapkan
-cancelScene.on('message', async (ctx) => {
-    logger.warn(`[SCENE: ${CANCEL_WIZARD_SCENE_ID}] Menerima pesan tak terduga: "${ctx.message.text}". User: ${ctx.from.id}`);
-    await ctx.reply('Mohon masukkan ID pesan yang valid atau kirim /batalscene untuk keluar.');
-});
+// Komentari atau hapus handler .on('message') yang umum jika tidak diperlukan lagi
+// cancelScene.on('message', async (ctx) => {
+//     logger.warn(`[SCENE: ${CANCEL_WIZARD_SCENE_ID}] Menerima pesan tak terduga: "${ctx.message.text}". User: ${ctx.from.id}`);
+//     await ctx.reply('Mohon masukkan nomor urut pesan yang valid atau kirim /batalscene untuk keluar.');
+// });
 
 module.exports = cancelScene;
